@@ -1,0 +1,116 @@
+//  Install npm dependencies first
+//  npm init
+//  npm install --save url@0.10.3
+//  npm install --save http-proxy@1.11.1
+
+
+// Shamelessly script kiddied from https://stackoverflow.com/a/32104777/7134549
+
+
+
+var httpProxy = require("http-proxy");
+var http = require("http");
+var url = require("url");
+var net = require('net');
+const fetch = require('node-fetch');
+
+var server = http.createServer(function (req, res) {
+try {
+
+    
+  var urlObj = url.parse(req.url);
+  var target = urlObj.protocol + "//" + urlObj.host;
+  //
+  let url = `https://8.8.8.8/resolve?name=${urlObj.host}&type=A`;
+  let settings = { method: "Get", headers:{host:"dns.google"}};
+  let trueHost;
+  fetch(url, settings)
+  .then(res => res.json())
+  .then((json) => {
+      
+      console.log(json.Answer[0].data)
+      truehost = json.Answer[0].data
+  }).then(next => {
+    target =urlObj.protocol + "//" + trueHost;
+
+
+  //console.log("Proxy HTTP request for:", target);
+
+  var proxy = httpProxy.createProxyServer({});
+  proxy.on("error", function (err, req, res) {
+    console.log("proxy error", err);
+    res.end();
+  });
+
+  proxy.web(req, res, {target: target});
+})}catch (e) {
+    console.log(e)
+}}).listen(8080);  //this is the port your clients will connect to
+
+var regex_hostport = /^([^:]+)(:([0-9]+))?$/;
+
+var getHostPortFromString = function (hostString, defaultPort) {
+  var host = hostString;
+  var port = defaultPort;
+
+  var result = regex_hostport.exec(hostString);
+  if (result != null) {
+    host = result[1];
+    if (result[2] != null) {
+      port = result[3];
+    }
+  }
+
+  return ( [host, port] );
+};
+
+server.addListener('connect', function (req, socket, bodyhead) {
+  var hostPort = getHostPortFromString(req.url, 443);
+  var hostDomain = hostPort[0];
+  var port = parseInt(hostPort[1]);
+  let url = `https://8.8.8.8/resolve?name=${hostDomain}&type=A`;
+  let settings = { method: "Get", headers:{host:"dns.google"}};
+  let trueHost;
+  fetch(url, settings)
+  .then(res => res.json())
+  .then((json) => {
+      
+      console.log(json.Answer[0].data)
+      truehost = json.Answer[0].data
+  }).then(next => {
+
+  console.log("Proxying HTTPS request for:", truehost, port, net.isIPv4(trueHost));
+
+  var proxySocket = new net.Socket();
+  proxySocket.connect(port, truehost, function () {
+      proxySocket.write(bodyhead);
+      socket.write("HTTP/" + req.httpVersion + " 200 Connection established\r\n\r\n");
+    }
+  );
+
+  proxySocket.on('data', function (chunk) {
+    socket.write(chunk);
+  });
+
+  proxySocket.on('end', function () {
+    socket.end();
+  });
+
+  proxySocket.on('error', function () {
+    socket.write("HTTP/" + req.httpVersion + " 500 Connection error\r\n\r\n");
+    socket.end();
+  });
+
+  socket.on('data', function (chunk) {
+    proxySocket.write(chunk);
+  });
+
+  socket.on('end', function () {
+    proxySocket.end();
+  });
+
+  socket.on('error', function () {
+    proxySocket.end();
+  });
+
+})});
